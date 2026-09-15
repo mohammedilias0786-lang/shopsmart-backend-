@@ -51,25 +51,38 @@ app.post('/api/verify-payment', (req, res) => {
             return res.status(400).json({ success: false, error: 'Missing fields' });
         }
 
+        // Step 1 — verify signature
         const body = razorpay_order_id + '|' + razorpay_payment_id;
-        const expectedSignature = crypto
-            .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
-            .update(body)
-            .digest('hex');
+        const expectedSignature = crypto.createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+            .update(body).digest('hex');
 
-        if (expectedSignature === razorpay_signature) {
-            res.json({
-                success: true,
-                message: 'Payment verified',
-                payment_id: razorpay_payment_id,
-                order_id: razorpay_order_id
-            });
-        } else {
-            res.status(400).json({ success: false, error: 'Invalid signature' });
+        if (expectedSignature !== razorpay_signature) {
+            return res.status(400).json({ success: false, error: 'Invalid signature' });
         }
+
+        // Step 2 — ⭐ verify payment is ACTUALLY captured
+        const payment = await razorpay.payments.fetch(razorpay_payment_id);
+
+        if (payment.status !== 'captured') {
+            return res.status(400).json({
+                success: false,
+                error: 'Payment not captured',
+                status: payment.status
+            });
+        }
+
+        // Both checks passed — real payment
+        return res.json({
+            success: true,
+            payment_id: razorpay_payment_id,
+            order_id: razorpay_order_id,
+            method: payment.method,
+            amount: payment.amount
+        });
+
     } catch (err) {
         console.error('Verify error:', err);
-        res.status(500).json({ success: false, error: 'Verification failed' });
+        return res.status(500).json({ success: false, error: 'Verification failed' });
     }
 });
 
